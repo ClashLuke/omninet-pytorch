@@ -146,33 +146,20 @@ class Omninet(nn.Module):
 
         self.calls_since_last_redraw += 1
 
-    def forward(self, x, mask = None):
-        self.check_redraw_projections()
-        pool_num_layers = self.pool_num_layers
-
+    def forward(self, x):
         hiddens = [x]
 
         for attn, ff, efficient_attn in self.layers:
-            x = attn(x, mask = mask) + x
+            x = attn(x) + x
             x = ff(x) + x
 
             hiddens.append(x)
-            if exists(efficient_attn):
-                layers_to_pool = hiddens[-pool_num_layers:]
-                num_layers = len(layers_to_pool)
 
-                all_tokens = torch.stack(layers_to_pool)
-                all_tokens = rearrange(all_tokens, 'l b n d -> b (n l) d')
-
-                pool_attn_mask = None
-                if exists(mask):
-                    pool_attn_mask = repeat(mask, 'b n -> b (n l)', l = num_layers)
-
-                attended_tokens = efficient_attn(all_tokens, mask = pool_attn_mask)
-
-                attended_tokens = rearrange(attended_tokens, 'b n c -> b c n')
-                pooled_tokens = F.max_pool1d(attended_tokens, kernel_size = num_layers, stride = num_layers)
-                x += rearrange(pooled_tokens, 'b c n -> b n c')
+            layers_to_pool = hiddens[-self.pool_num_layers:]
+            all_tokens = torch.cat(layers_to_pool, 1)
+            attended_tokens = efficient_attn(all_tokens)
+            pooled_tokens = attended_tokens.view(x.size(0), x.size(1), -1, x.size(2)).max(2)
+            x += pooled_tokens
 
         return x
 
